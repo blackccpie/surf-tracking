@@ -1,6 +1,29 @@
+# The MIT License
+
+# Copyright (c) 2025 Albert Murienne
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+# THE SOFTWARE.
+
+import gradio as gr
+import html
 import numpy as np
 import folium
-import matplotlib.pyplot as plt
 from fitparse import FitFile
 from pykalman import KalmanFilter
 from geopy.distance import geodesic
@@ -67,19 +90,42 @@ def apply_kalman_filter(latitudes, longitudes, speeds, timestamps):
     smoothed_states, _ = kf.smooth(np.column_stack([latitudes, longitudes, speeds]))
     return smoothed_states[:, 0], smoothed_states[:, 1], smoothed_states[:, 2]  # Smoothed lat, lon, speed
 
+def interpolate_color(val, colors):
+    """Interpolates between given colors based on val (0 to 1)."""
+    val = np.clip(val, 0, 1)  # Ensure value is within range
+
+    idx = int(val * (len(colors) - 1))  # Find lower index
+    frac = (val * (len(colors) - 1)) - idx  # Compute fractional part
+
+    # Linear interpolation between two nearest colors
+    color1 = np.array(colors[idx])
+    color2 = np.array(colors[min(idx + 1, len(colors) - 1)])
+    interpolated = (1 - frac) * color1 + frac * color2
+
+    return [int(c) for c in interpolated]  # Convert to RGB
+
 def speed_to_color(speed, min_speed, max_speed):
-    """Maps speed to color (blue = slow, red = fast)."""
+    """Maps speed to color."""
     if max_speed == min_speed:  # Prevent division by zero
-        norm_speed = 0.5  # Neutral color
+        norm_speed = 0.5
     else:
         norm_speed = (speed - min_speed) / (max_speed - min_speed)
 
-    cmap = plt.get_cmap("plasma")
-    return [int(c * 255) for c in cmap(norm_speed)[:3]]  # Convert to RGB
+    # Define color gradient (approximate "plasma")
+    colors = [
+        (13, 8, 135),  # Dark blue
+        (156, 23, 158),  # Purple
+        (237, 121, 83),  # Orange
+        (240, 249, 33)  # Yellow
+    ]
 
-def plot_colored_route(fit_file_path, output_html="speed_colored_map.html"):
+    return interpolate_color(norm_speed, colors)
+
+def plot_colored_route(fit_file_path):
     """Plots an activity map with speed-based colors (from .fit file)."""
     latitudes, longitudes, speeds, timestamps = extract_fit_data(fit_file_path)
+
+    print(f"plotting {fit_file_path}")
 
     if not latitudes.size:
         print("No GPS data found in the file.")
@@ -95,6 +141,8 @@ def plot_colored_route(fit_file_path, output_html="speed_colored_map.html"):
 
     # Normalize speed for color mapping
     min_speed, max_speed = np.nanmin(filtered_speed), np.nanmax(filtered_speed)
+
+    print("instanciating folium map")
 
     # Create map centered at the first coordinate
     m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=14)
@@ -112,9 +160,30 @@ def plot_colored_route(fit_file_path, output_html="speed_colored_map.html"):
             opacity=0.8
         ).add_to(m)
 
-    # Save the map
-    m.save(output_html)
-    print(f"Speed-colored map saved as {output_html}")
+    html_path = 'temp_map.html'
+    m.save(html_path)
+    begin_html_iframe = '<div style="position:relative;width:100%;height:0;padding-bottom:60%;"><iframe srcdoc="'
+    end_html_iframe = '" style="position:absolute;width:100%;height:100%;left:0;top:0;border:none;"></iframe></div>'
+                   
+    with open(html_path, 'r') as file:
+        html_as_string = file.read()
+        map_html = gr.HTML(begin_html_iframe + html.escape(html_as_string) + end_html_iframe, visible=True)
 
-# Example usage:
-plot_colored_route("data/18222111116_ACTIVITY.fit")
+    return map_html
+
+# Create a Gradio interface
+with gr.Blocks() as demo:
+
+    gr.Markdown("# 🌊 Surf Tracking - GPS Map")
+    gr.Markdown("Upload a **.fit file** to visualize the GPS track on an interactive map.")
+
+    file_input = gr.File(label="Upload .fit file")
+    button = gr.Button("Analyze")
+    output_map = gr.HTML()
+
+    # Connect button to function
+    button.click(plot_colored_route, inputs=file_input, outputs=output_map)
+
+if __name__ == "__main__":
+    demo.launch()
+
