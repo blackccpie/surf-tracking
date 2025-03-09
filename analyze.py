@@ -130,6 +130,16 @@ def detect_waves(speeds, timestamps, speed_threshold, min_duration):
     in_wave = False
     start_idx = None
 
+    def __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, end_idx):
+        waves.append({
+            "max_speed_index": max_speed_index,
+            "max_speed": speeds[max_speed_index],
+            "duration": duration,
+            "num_points": len(wave_segment_indices),
+            "first_point_index": start_idx,
+            "last_point_index": end_idx,
+        })
+
     for i, speed in enumerate(speeds):
         if speed >= speed_threshold:
             if not in_wave:
@@ -143,7 +153,7 @@ def detect_waves(speeds, timestamps, speed_threshold, min_duration):
                     # Choose the point of maximum speed in the segment as the wave "event"
                     wave_segment_indices = range(start_idx, i)
                     max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
-                    waves.append(max_speed_index)
+                    __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, i)
                 in_wave = False
     # In case the final segment is still in-wave:
     if in_wave:
@@ -151,7 +161,7 @@ def detect_waves(speeds, timestamps, speed_threshold, min_duration):
         if duration >= min_duration:
             wave_segment_indices = range(start_idx, len(speeds))
             max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
-            waves.append(max_speed_index)
+            __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, i)
     return waves
 
 def plot_colored_route(fit_file_path, wave_speed_threshold=2.0, wave_min_duration=2.0):
@@ -207,13 +217,26 @@ def plot_colored_route(fit_file_path, wave_speed_threshold=2.0, wave_min_duratio
 
     print(f"detected {len(waves)} waves")
 
+    # Create a FeatureGroup for wave markers
+    wave_markers = folium.FeatureGroup(name="Wave Markers")
+
     # Add markers with wave index numbers at detected wave locations
-    for idx, wave_idx in enumerate(waves, start=1):
+    for idx, wave_dict in enumerate(waves, start=1):
+        wave_max_speed_idx = wave_dict['max_speed_index']
+        wave_max_speed = wave_dict['max_speed']
+        popup_text = f"#{idx}\n{round(3.6 * wave_max_speed,1)} km/h"
         folium.Marker(
-            location=[filtered_lat[wave_idx], filtered_lon[wave_idx]],
+            location=[filtered_lat[wave_max_speed_idx], filtered_lon[wave_max_speed_idx]],
+            popup=popup_text,
             #icon=folium.DivIcon(html=f'<div style="font-size: 12pt; color: black">{idx}</div>')
             icon=folium.Icon("green")
-        ).add_to(m)
+        ).add_to(wave_markers)
+
+    # Add the wave markers layer to the map
+    m.add_child(wave_markers)
+
+    # Add a LayerControl so that layers can be toggled
+    folium.LayerControl().add_to(m)
 
     html_path = 'temp_map.html'
     m.save(html_path)
