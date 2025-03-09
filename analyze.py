@@ -24,71 +24,8 @@ import gradio as gr
 import html
 import numpy as np
 import folium
-from fitparse import FitFile
-from pykalman import KalmanFilter
-from geopy.distance import geodesic
 
-def extract_fit_data(fit_file_path):
-    """Extracts lat, lon, and speed (if available) from a .fit file."""
-    fitfile = FitFile(fit_file_path)
-    latitudes, longitudes, speeds, timestamps = [], [], [], []
-
-    for record in fitfile.get_messages("record"):
-        lat, lon, speed, timestamp = None, None, None, None
-
-        for data in record:
-
-            if data.name == "position_lat":
-                lat = data.value / (2**31) * 180  # Convert Garmin's semi-circle format to degrees
-            elif data.name == "position_long":
-                lon = data.value / (2**31) * 180
-            elif data.name == "enhanced_speed":  # Speed in m/s
-                speed = data.value
-            elif data.name == "timestamp":
-                timestamp = data.value.timestamp()  # Convert to UNIX time
-
-        if lat is not None and lon is not None:
-            latitudes.append(lat)
-            longitudes.append(lon)
-            timestamps.append(timestamp if timestamp is not None else 0)
-            speeds.append(speed if speed is not None else np.nan)  # Use NaN for missing speeds
-
-    return np.array(latitudes), np.array(longitudes), np.array(speeds), np.array(timestamps)
-
-def compute_speed_from_gps(latitudes, longitudes, timestamps):
-    """Estimates speed (m/s) from GPS data using Haversine distance and time."""
-    estimated_speeds = np.zeros_like(latitudes, dtype=float)
-
-    for i in range(1, len(latitudes)):
-        distance = geodesic((latitudes[i-1], longitudes[i-1]), (latitudes[i], longitudes[i])).meters
-        time_diff = timestamps[i] - timestamps[i-1]
-
-        estimated_speeds[i] = distance / time_diff if time_diff > 0 else 0  # Avoid division by zero
-
-    return estimated_speeds
-
-def apply_kalman_filter(latitudes, longitudes, speeds, timestamps):
-    """Applies a Kalman Filter to smooth lat, lon, and estimated speed."""
-    if np.isnan(speeds).all():  # If all speed values are missing, estimate them
-        speeds = compute_speed_from_gps(latitudes, longitudes, timestamps)
-    else:
-        print("using native speed measurements")
-
-    initial_state = [latitudes[0], longitudes[0], speeds[0]]
-
-    transition_matrix = np.eye(3)  # Identity matrix (assumes smooth movement)
-    observation_matrix = np.eye(3)  # Direct observation
-
-    kf = KalmanFilter(
-        initial_state_mean=initial_state,
-        transition_matrices=transition_matrix,
-        observation_matrices=observation_matrix,
-        observation_covariance=np.eye(3) * 0.0001,  # Adjust GPS noise level
-        transition_covariance=np.eye(3) * 0.00001,  # Adjust for smoother tracking
-    )
-
-    smoothed_states, _ = kf.smooth(np.column_stack([latitudes, longitudes, speeds]))
-    return smoothed_states[:, 0], smoothed_states[:, 1], smoothed_states[:, 2]  # Smoothed lat, lon, speed
+from wave_analyzer import wave_analyzer
 
 def interpolate_color(val, colors):
     """Interpolates between given colors based on val (0 to 1)."""
@@ -121,73 +58,24 @@ def speed_to_color(speed, min_speed, max_speed):
 
     return interpolate_color(norm_speed, colors)
 
-def detect_waves(speeds, timestamps, speed_threshold, min_duration):
-    """
-    Detects waves when the speed stays above 'speed_threshold' for at least 'min_duration' seconds.
-    Returns a list of indices corresponding to detected wave events (here, the index with maximum speed in the wave).
-    """
-    waves = []
-    in_wave = False
-    start_idx = None
-
-    def __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, end_idx):
-        waves.append({
-            "max_speed_index": max_speed_index,
-            "max_speed": speeds[max_speed_index],
-            "duration": duration,
-            "num_points": len(wave_segment_indices),
-            "first_point_index": start_idx,
-            "last_point_index": end_idx,
-        })
-
-    for i, speed in enumerate(speeds):
-        if speed >= speed_threshold:
-            if not in_wave:
-                in_wave = True
-                start_idx = i
-        else:
-            if in_wave:
-                # Wave segment ended: check if duration qualifies
-                duration = timestamps[i - 1] - timestamps[start_idx]
-                if duration >= min_duration:
-                    # Choose the point of maximum speed in the segment as the wave "event"
-                    wave_segment_indices = range(start_idx, i)
-                    max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
-                    __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, i)
-                in_wave = False
-    # In case the final segment is still in-wave:
-    if in_wave:
-        duration = timestamps[-1] - timestamps[start_idx]
-        if duration >= min_duration:
-            wave_segment_indices = range(start_idx, len(speeds))
-            max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
-            __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, i)
-    return waves
-
-def plot_colored_route(fit_file_path, wave_speed_threshold=2.0, wave_min_duration=2.0):
+def plot_colored_route(fit_file_path, wave_params):
     """
     Plots an activity map with segments color-coded by speed.
     Additionally, detects waves when speed exceeds 'wave_speed_threshold' (m/s) for at least 'wave_min_duration' seconds,
     and adds numbered markers to the map at the detected wave positions.
     """
-    latitudes, longitudes, speeds, timestamps = extract_fit_data(fit_file_path)
 
+    # Extract wave detection parameters from the state
+    wave_speed_threshold = wave_params.get("speed_threshold", 2.0)
+    wave_min_duration = wave_params.get("min_duration", 2.0)
+    
     print(f"plotting {fit_file_path}")
 
-    if not latitudes.size:
-        print("No GPS data found in the file.")
-        return
-
-    # Apply Kalman filter (with speed estimation if missing)
-    filtered_lat, filtered_lon, filtered_speed = apply_kalman_filter(latitudes, longitudes, speeds, timestamps)
-
-    # Handle missing or constant speed values
-    if np.isnan(filtered_speed).all() or (np.max(filtered_speed) == np.min(filtered_speed)):
-        print("Warning: No valid speed variation detected. Using default color.")
-        filtered_speed = np.zeros_like(filtered_speed)  # Default to zero speed
-
-    # Normalize speed for color mapping
-    min_speed, max_speed = np.nanmin(filtered_speed), np.nanmax(filtered_speed)
+    # Analyze wave data
+    wazer = wave_analyzer( wave_speed_threshold, wave_min_duration )
+    wazer.process(fit_file_path)
+    filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed = wazer.get_motion_data()
+    waves = wazer.get_waves_data()
 
     print("instanciating folium map")
 
@@ -206,16 +94,6 @@ def plot_colored_route(fit_file_path, wave_speed_threshold=2.0, wave_min_duratio
             weight=5,
             opacity=0.8
         ).add_to(m)
-
-    # Detect waves using the specified speed and duration thresholds
-    waves = detect_waves(
-        filtered_speed,
-        timestamps,
-        speed_threshold=wave_speed_threshold,
-        min_duration=wave_min_duration
-    )
-
-    print(f"detected {len(waves)} waves")
 
     # Create a FeatureGroup for wave markers
     wave_markers = folium.FeatureGroup(name="Wave Markers")
@@ -256,11 +134,30 @@ with gr.Blocks() as demo:
     gr.Markdown("Upload a **.fit file** to visualize the GPS track on an interactive map.")
 
     file_input = gr.File(label="Upload .fit file")
+    
+    # Define sliders for wave detection parameters
+    wave_threshold_slider = gr.Slider(label="Wave Detection Speed Threshold", minimum=0, maximum=5, value=2.0, step=0.1, interactive=True)
+    wave_duration_slider = gr.Slider(label="Wave Detection Minimum Wave Duration", minimum=0, maximum=10, value=2.0, step=0.5, interactive=True)
+    
+    # Initialize state with default parameters
+    wave_params = gr.State({"speed_threshold": 2.0, "min_duration": 2.0})
+
     button = gr.Button("Analyze")
     output_map = gr.HTML()
 
+    def update_wave_params(speed_threshold, min_duration):
+        return {"speed_threshold": speed_threshold, "min_duration": min_duration}
+
+    # Update the state when either slider changes
+    wave_threshold_slider.change(update_wave_params, 
+                                inputs=[wave_threshold_slider, wave_duration_slider], 
+                                outputs=wave_params)
+    wave_duration_slider.change(update_wave_params, 
+                                inputs=[wave_threshold_slider, wave_duration_slider], 
+                                outputs=wave_params)
+
     # Connect button to function
-    button.click(plot_colored_route, inputs=file_input, outputs=output_map)
+    button.click(plot_colored_route, inputs=[file_input, wave_params], outputs=output_map)
 
 if __name__ == "__main__":
     demo.launch()
