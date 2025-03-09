@@ -80,7 +80,10 @@ def plot_colored_route(fit_file_path, wave_params):
     print("instanciating folium map")
 
     # Create map centered at the first coordinate
-    m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=14)
+    m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=15, max_zoom=20)
+
+     # Create a FeatureGroup for raw positioning
+    raw_positioning = folium.FeatureGroup(name="Raw Positioning")
 
     # Plot segments with color-coded speed
     for i in range(len(filtered_lat) - 1):
@@ -93,15 +96,23 @@ def plot_colored_route(fit_file_path, wave_params):
             color=color,
             weight=5,
             opacity=0.8
-        ).add_to(m)
+        ).add_to(raw_positioning)
 
     # Create a FeatureGroup for wave markers
     wave_markers = folium.FeatureGroup(name="Wave Markers")
+
+    # Create a FeatureGroup for wave segments
+    wave_segments = folium.FeatureGroup(name="Wave Segments")
 
     # Add markers with wave index numbers at detected wave locations
     for idx, wave_dict in enumerate(waves, start=1):
         wave_max_speed_idx = wave_dict['max_speed_index']
         wave_max_speed = wave_dict['max_speed']
+        wave_first_idx = wave_dict['first_point_index']
+        wave_last_idx = wave_dict['last_point_index']
+
+        print(f"{wave_max_speed_idx}/{wave_first_idx}/{wave_last_idx}")
+
         popup_text = f"#{idx}\n{round(3.6 * wave_max_speed,1)} km/h"
         folium.Marker(
             location=[filtered_lat[wave_max_speed_idx], filtered_lon[wave_max_speed_idx]],
@@ -110,8 +121,39 @@ def plot_colored_route(fit_file_path, wave_params):
             icon=folium.Icon("green")
         ).add_to(wave_markers)
 
-    # Add the wave markers layer to the map
+        folium.Circle(
+            location=[filtered_lat[wave_first_idx], filtered_lon[wave_first_idx]],
+            radius=2,
+            color="black",
+            weight=1,
+            fill_opacity=0.6,
+            opacity=1,
+            fill_color="green",
+            fill=False,  # gets overridden by fill_color
+        ).add_to(wave_segments)
+
+        folium.Circle(
+            location=[filtered_lat[wave_last_idx], filtered_lon[wave_last_idx]],
+            radius=2,
+            color="black",
+            weight=1,
+            fill_opacity=0.6,
+            opacity=1,
+            fill_color="red",
+            fill=False,  # gets overridden by fill_color
+        ).add_to(wave_segments)
+
+        folium.PolyLine(
+            [(filtered_lat[wave_first_idx], filtered_lon[wave_first_idx]), (filtered_lat[wave_last_idx], filtered_lon[wave_last_idx])],
+            color="green",
+            weight=5,
+            opacity=0.8
+        ).add_to(wave_segments)
+
+    # Add the layers to the map
+    m.add_child(raw_positioning)
     m.add_child(wave_markers)
+    m.add_child(wave_segments)
 
     # Add a LayerControl so that layers can be toggled
     folium.LayerControl().add_to(m)
@@ -135,9 +177,10 @@ with gr.Blocks() as demo:
 
     file_input = gr.File(label="Upload .fit file")
     
-    # Define sliders for wave detection parameters
-    wave_threshold_slider = gr.Slider(label="Wave Detection Speed Threshold", minimum=0, maximum=5, value=2.0, step=0.1, interactive=True)
-    wave_duration_slider = gr.Slider(label="Wave Detection Minimum Wave Duration", minimum=0, maximum=10, value=2.0, step=0.5, interactive=True)
+    with gr.Accordion("Detection Parameters", open=False):
+        # Define sliders for wave detection parameters
+        wave_threshold_slider = gr.Slider(label="Wave Detection Speed Threshold", minimum=0, maximum=5, value=2.0, step=0.1, interactive=True)
+        wave_duration_slider = gr.Slider(label="Wave Detection Minimum Wave Duration", minimum=0, maximum=10, value=2.0, step=0.5, interactive=True)
     
     # Initialize state with default parameters
     wave_params = gr.State({"speed_threshold": 2.0, "min_duration": 2.0})
