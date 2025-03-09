@@ -121,8 +121,45 @@ def speed_to_color(speed, min_speed, max_speed):
 
     return interpolate_color(norm_speed, colors)
 
-def plot_colored_route(fit_file_path):
-    """Plots an activity map with speed-based colors (from .fit file)."""
+def detect_waves(speeds, timestamps, speed_threshold, min_duration):
+    """
+    Detects waves when the speed stays above 'speed_threshold' for at least 'min_duration' seconds.
+    Returns a list of indices corresponding to detected wave events (here, the index with maximum speed in the wave).
+    """
+    waves = []
+    in_wave = False
+    start_idx = None
+
+    for i, speed in enumerate(speeds):
+        if speed >= speed_threshold:
+            if not in_wave:
+                in_wave = True
+                start_idx = i
+        else:
+            if in_wave:
+                # Wave segment ended: check if duration qualifies
+                duration = timestamps[i - 1] - timestamps[start_idx]
+                if duration >= min_duration:
+                    # Choose the point of maximum speed in the segment as the wave "event"
+                    wave_segment_indices = range(start_idx, i)
+                    max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
+                    waves.append(max_speed_index)
+                in_wave = False
+    # In case the final segment is still in-wave:
+    if in_wave:
+        duration = timestamps[-1] - timestamps[start_idx]
+        if duration >= min_duration:
+            wave_segment_indices = range(start_idx, len(speeds))
+            max_speed_index = max(wave_segment_indices, key=lambda j: speeds[j])
+            waves.append(max_speed_index)
+    return waves
+
+def plot_colored_route(fit_file_path, wave_speed_threshold=2.0, wave_min_duration=2.0):
+    """
+    Plots an activity map with segments color-coded by speed.
+    Additionally, detects waves when speed exceeds 'wave_speed_threshold' (m/s) for at least 'wave_min_duration' seconds,
+    and adds numbered markers to the map at the detected wave positions.
+    """
     latitudes, longitudes, speeds, timestamps = extract_fit_data(fit_file_path)
 
     print(f"plotting {fit_file_path}")
@@ -158,6 +195,24 @@ def plot_colored_route(fit_file_path):
             color=color,
             weight=5,
             opacity=0.8
+        ).add_to(m)
+
+    # Detect waves using the specified speed and duration thresholds
+    waves = detect_waves(
+        filtered_speed,
+        timestamps,
+        speed_threshold=wave_speed_threshold,
+        min_duration=wave_min_duration
+    )
+
+    print(f"detected {len(waves)} waves")
+
+    # Add markers with wave index numbers at detected wave locations
+    for idx, wave_idx in enumerate(waves, start=1):
+        folium.Marker(
+            location=[filtered_lat[wave_idx], filtered_lon[wave_idx]],
+            #icon=folium.DivIcon(html=f'<div style="font-size: 12pt; color: black">{idx}</div>')
+            icon=folium.Icon("green")
         ).add_to(m)
 
     html_path = 'temp_map.html'
