@@ -184,7 +184,7 @@ class wave_analyzer:
         """
         return self.waves
 
-    def process(self, fit_file_path):
+    def process(self, fit_file_path, disable_filter=False):
         """
         Processes waves data file.
         """
@@ -192,8 +192,11 @@ class wave_analyzer:
         # Parse .fit data
         self.__extract_fit_data(fit_file_path)
 
-        # Apply Kalman filter (with speed estimation if missing)
-        self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.__apply_kalman_filter()
+        if not disable_filter:
+            # Apply Kalman filter (with speed estimation if missing)
+            self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.__apply_kalman_filter()
+        else:
+            self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.latitudes, self.longitudes, self.speeds
 
         # Handle missing or constant speed values
         if np.isnan(self.filtered_speeds).all() or (np.max(self.filtered_speeds) == np.min(self.filtered_speeds)):

@@ -65,6 +65,8 @@ def plot_colored_route(fit_file_path, wave_params):
     and adds numbered markers to the map at the detected wave positions.
     """
 
+    progress(0, desc="Initializing")
+
     # Extract wave detection parameters from the state
     wave_speed_threshold = wave_params.get("speed_threshold", 2.0)
     wave_min_duration = wave_params.get("min_duration", 2.0)
@@ -76,6 +78,8 @@ def plot_colored_route(fit_file_path, wave_params):
     wazer.process(fit_file_path)
     filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed = wazer.get_motion_data()
     waves = wazer.get_waves_data()
+
+    progress(0.5, desc="Processing wave data")
 
     print("instanciating folium map")
 
@@ -97,6 +101,8 @@ def plot_colored_route(fit_file_path, wave_params):
             weight=5,
             opacity=0.8
         ).add_to(raw_positioning)
+
+    progress(0.7, desc="Plotting segments")
 
     # Create a FeatureGroup for wave markers
     wave_markers = folium.FeatureGroup(name="Wave Markers")
@@ -150,6 +156,8 @@ def plot_colored_route(fit_file_path, wave_params):
             opacity=0.8
         ).add_to(wave_segments)
 
+    progress(0.9, desc="Adding wave markers")
+
     # Add the layers to the map
     m.add_child(raw_positioning)
     m.add_child(wave_markers)
@@ -166,6 +174,8 @@ def plot_colored_route(fit_file_path, wave_params):
     with open(html_path, 'r') as file:
         html_as_string = file.read()
         map_html = gr.HTML(begin_html_iframe + html.escape(html_as_string) + end_html_iframe, visible=True)
+
+    progress(1, desc="Completed")
 
     return map_html
 
@@ -186,6 +196,7 @@ with gr.Blocks() as demo:
     wave_params = gr.State({"speed_threshold": 2.0, "min_duration": 2.0})
 
     button = gr.Button("Analyze")
+    progress = gr.Progress()
     output_map = gr.HTML()
 
     def update_wave_params(speed_threshold, min_duration):
