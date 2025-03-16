@@ -180,6 +180,20 @@ class wave_analyzer:
                 max_speed_index = max(wave_segment_indices, key=lambda j: input_speeds[j])
                 __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, i)
         return waves
+
+    def __filter_outlier_waves(self, 
+                               waves, 
+                               max_speed_threshold_kmh=15.0, 
+                               min_duration_threshold=1.0, 
+                               max_duration_threshold=15.0):
+        """
+        Filters out waves that are considered outliers based on speed (km/h) and duration thresholds (s).
+        """
+        filtered_waves = []
+        for wave in waves:
+            if wave['max_speed'] <= (max_speed_threshold_kmh/3.6) and wave['duration'] >= min_duration_threshold and wave['duration'] <= max_duration_threshold:
+                filtered_waves.append(wave)
+        return filtered_waves
     
     def get_motion_data(self):
         """
@@ -221,6 +235,9 @@ class wave_analyzer:
         # Detect waves using the specified speed and duration thresholds
         self.waves = self.__detect_waves(self.filtered_speeds)
 
+        # Filter outlier waves
+        self.waves = self.__filter_outlier_waves(self.waves)
+
         print(f"detected {len(self.waves)} waves")
 
     def generate_waves_markdown_table(self):
@@ -230,12 +247,13 @@ class wave_analyzer:
         if not self.waves:
             return "No waves detected."
 
-        table_header = "| Wave Index | Max Speed (m/s) | Duration (s) | Number of Points | Start Index | End Index |\n"
-        table_divider = "|------------|----------------|--------------|------------------|-------------|-----------|\n"
+        table_header = "| Wave Index | Max Speed (km/h) | Duration (s) | Number of Points | Start Index | End Index |\n"
+        table_divider = "|------------|------------------|--------------|------------------|-------------|-----------|\n"
         table_rows = ""
 
         for idx, wave in enumerate(self.waves, start=1):
-            table_rows += f"| {idx} | {wave['max_speed']} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} |\n"
+            max_speed_kmh = wave['max_speed'] * 3.6  # Convert m/s to km/h
+            table_rows += f"| {idx} | {max_speed_kmh:.2f} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} |\n"
 
         return table_header + table_divider + table_rows
 
