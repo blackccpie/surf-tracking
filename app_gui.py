@@ -63,6 +63,9 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
     Creates a folium map with color-coded segments and wave markers.
     """
     
+    # Calculate bounds for the map
+    bounds = [[min(filtered_lat), min(filtered_lon)], [max(filtered_lat), max(filtered_lon)]]
+    
     m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=15, max_zoom=20)
 
     raw_positioning = folium.FeatureGroup(name="Raw Positioning")
@@ -127,6 +130,9 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
     m.add_child(wave_markers)
     m.add_child(wave_segments)
     folium.LayerControl().add_to(m)
+
+    # Fit the map to the bounds of the wave points
+    m.fit_bounds(bounds)
 
     return m
 

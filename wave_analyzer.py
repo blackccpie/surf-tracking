@@ -148,6 +148,10 @@ class wave_analyzer:
         start_idx = None
 
         def __add_wave(duration, max_speed_index, wave_segment_indices, start_idx, end_idx):
+            wave_length = sum(
+                geodesic((self.latitudes[i], self.longitudes[i]), (self.latitudes[i + 1], self.longitudes[i + 1])).meters
+                for i in wave_segment_indices[:-1]
+            )
             waves.append({
                 "max_speed_index": max_speed_index,
                 "max_speed": input_speeds[max_speed_index],
@@ -155,6 +159,7 @@ class wave_analyzer:
                 "num_points": len(wave_segment_indices),
                 "first_point_index": start_idx,
                 "last_point_index": end_idx,
+                "length": wave_length
             })
 
         for i, speed in enumerate(input_speeds):
@@ -247,13 +252,13 @@ class wave_analyzer:
         if not self.waves:
             return "No waves detected."
 
-        table_header = "| Wave Index | Max Speed (km/h) | Duration (s) | Number of Points | Start Index | End Index |\n"
-        table_divider = "|------------|------------------|--------------|------------------|-------------|-----------|\n"
+        table_header = "| Wave Index | Max Speed (km/h) | Duration (s) | Number of Points | Start Index | End Index | Length (m) |\n"
+        table_divider = "|------------|------------------|--------------|------------------|-------------|-----------|------------|\n"
         table_rows = ""
 
         for idx, wave in enumerate(self.waves, start=1):
             max_speed_kmh = wave['max_speed'] * 3.6  # Convert m/s to km/h
-            table_rows += f"| {idx} | {max_speed_kmh:.2f} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} |\n"
+            table_rows += f"| {idx} | {max_speed_kmh:.2f} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} | {wave['length']:.2f} |\n"
 
         return table_header + table_divider + table_rows
 
