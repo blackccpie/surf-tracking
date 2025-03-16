@@ -68,7 +68,7 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
     
     m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=15, max_zoom=20)
 
-    raw_positioning = folium.FeatureGroup(name="Raw Positioning")
+    raw_positioning = folium.FeatureGroup(name="Raw Positioning", show=True)
     for i in range(len(filtered_lat) - 1):
         color = f'#{speed_to_color(filtered_speed[i], min_speed, max_speed)[0]:02x}' \
                 f'{speed_to_color(filtered_speed[i], min_speed, max_speed)[1]:02x}' \
@@ -81,8 +81,8 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
             opacity=0.8
         ).add_to(raw_positioning)
 
-    wave_markers = folium.FeatureGroup(name="Wave Markers")
-    wave_segments = folium.FeatureGroup(name="Wave Segments")
+    wave_markers = folium.FeatureGroup(name="Wave Markers", show=False)
+    wave_polylines = folium.FeatureGroup(name="Wave Polylines", show=True)
 
     for idx, wave_dict in enumerate(waves, start=1):
         wave_max_speed_idx = wave_dict['max_speed_index']
@@ -97,8 +97,10 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
             icon=folium.Icon("green")
         ).add_to(wave_markers)
 
+        wave_points = [(filtered_lat[i], filtered_lon[i]) for i in range(wave_first_idx, wave_last_idx + 1)]
+        
         folium.Circle(
-            location=[filtered_lat[wave_first_idx], filtered_lon[wave_first_idx]],
+            location=wave_points[0],
             radius=2,
             color="black",
             weight=1,
@@ -106,10 +108,10 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
             opacity=1,
             fill_color="green",
             fill=False,
-        ).add_to(wave_segments)
+        ).add_to(wave_polylines)
 
         folium.Circle(
-            location=[filtered_lat[wave_last_idx], filtered_lon[wave_last_idx]],
+            location=wave_points[-1],
             radius=2,
             color="black",
             weight=1,
@@ -117,18 +119,18 @@ def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed,
             opacity=1,
             fill_color="red",
             fill=False,
-        ).add_to(wave_segments)
+        ).add_to(wave_polylines)
 
         folium.PolyLine(
-            [(filtered_lat[wave_first_idx], filtered_lon[wave_first_idx]), (filtered_lat[wave_last_idx], filtered_lon[wave_last_idx])],
-            color="green",
+            wave_points,
+            color="orange",
             weight=5,
             opacity=0.8
-        ).add_to(wave_segments)
+        ).add_to(wave_polylines)
 
     m.add_child(raw_positioning)
     m.add_child(wave_markers)
-    m.add_child(wave_segments)
+    m.add_child(wave_polylines)
     folium.LayerControl().add_to(m)
 
     # Fit the map to the bounds of the wave points
@@ -174,6 +176,7 @@ def analyze_waves(fit_file_path: str, wave_params: gr.State):
     """
     Analyzes waves from a .fit file and returns a map and a markdown table.
     """
+    progress(0, desc="Initializing analysis")
 
     # Extract wave detection parameters from the state
     wave_speed_threshold = wave_params.get("speed_threshold", 2.0)
@@ -182,12 +185,23 @@ def analyze_waves(fit_file_path: str, wave_params: gr.State):
     print(f"analyzing {fit_file_path}")
 
     # Analyze waves
+    progress(0.1, desc="Initializing wave analyzer")
     wazer = wave_analyzer(wave_speed_threshold, wave_min_duration)
+
+    progress(0.2, desc="Processing .fit file")
     wazer.process(fit_file_path)
+
+    progress(0.5, desc="Generating map")
     map = plot_colored_route(wazer)
+
+    progress(0.7, desc="Generating waves table")
     table = wazer.generate_waves_markdown_table()
 
-    return map, table
+    progress(0.9, desc="Generating session summary")
+    summary = wazer.generate_summary_markdown_table()
+
+    progress(1, desc="Analysis complete")
+    return map, table, summary
 
 # Create a Gradio interface
 with gr.Blocks() as demo:
@@ -195,20 +209,25 @@ with gr.Blocks() as demo:
     gr.Markdown("# 🌊 Surf Tracking - GPS Map")
     gr.Markdown("Upload a **.fit file** to visualize the GPS track on an interactive map.")
 
-    file_input = gr.File(label="Upload .fit file")
-    
-    with gr.Accordion("Detection Parameters", open=False):
-        # Define sliders for wave detection parameters
-        wave_threshold_slider = gr.Slider(label="Wave Detection Speed Threshold", minimum=0, maximum=5, value=2.0, step=0.1, interactive=True)
-        wave_duration_slider = gr.Slider(label="Wave Detection Minimum Wave Duration", minimum=0, maximum=10, value=2.0, step=0.5, interactive=True)
-    
+    with gr.Row():
+        file_input = gr.File(label="Upload .fit file", file_count='single', file_types=['.fit'], height=150)
+        
+        with gr.Accordion("Detection Parameters", open=False):
+            # Define sliders for wave detection parameters
+            wave_threshold_slider = gr.Slider(label="Wave Detection Speed Threshold", minimum=0, maximum=5, value=2.0, step=0.1, interactive=True)
+            wave_duration_slider = gr.Slider(label="Wave Detection Minimum Wave Duration", minimum=0, maximum=10, value=2.0, step=0.5, interactive=True)
+        
     # Initialize state with default parameters
     wave_params = gr.State({"speed_threshold": 2.0, "min_duration": 2.0})
 
     button = gr.Button("Analyze")
-    progress = gr.Progress()
+    gr.Markdown("## Session summary")
+    waves_summary = gr.Markdown()
+    gr.Markdown("## Session Map")
     output_map = gr.HTML()
+    gr.Markdown("## Session details")
     waves_table = gr.Markdown()
+    progress = gr.Progress()
 
     def update_wave_params(speed_threshold, min_duration):
         return {"speed_threshold": speed_threshold, "min_duration": min_duration}
@@ -222,7 +241,7 @@ with gr.Blocks() as demo:
                                 outputs=wave_params)
 
     # Connect button to function
-    button.click(analyze_waves, inputs=[file_input, wave_params], outputs=[output_map, waves_table])
+    button.click(analyze_waves, inputs=[file_input, wave_params], outputs=[output_map, waves_table, waves_summary])
 
 if __name__ == "__main__":
     demo.launch()

@@ -21,10 +21,10 @@
 # THE SOFTWARE.
 
 import numpy as np
-
 from fitparse import FitFile
 from pykalman import KalmanFilter
 from geopy.distance import geodesic
+from geopy.geocoders import Nominatim
 
 class wave_analyzer:
     """
@@ -189,14 +189,18 @@ class wave_analyzer:
     def __filter_outlier_waves(self, 
                                waves, 
                                max_speed_threshold_kmh=15.0, 
-                               min_duration_threshold=1.0, 
-                               max_duration_threshold=15.0):
+                               min_duration_threshold=1.0,
+                               max_duration_threshold=15.0,
+                               min_length_threshold=5.0):
         """
         Filters out waves that are considered outliers based on speed (km/h) and duration thresholds (s).
         """
         filtered_waves = []
         for wave in waves:
-            if wave['max_speed'] <= (max_speed_threshold_kmh/3.6) and wave['duration'] >= min_duration_threshold and wave['duration'] <= max_duration_threshold:
+            if wave['max_speed'] < (max_speed_threshold_kmh/3.6) \
+                and wave['duration'] > min_duration_threshold \
+                and wave['duration'] < max_duration_threshold \
+                and wave['length'] > min_length_threshold:
                 filtered_waves.append(wave)
         return filtered_waves
     
@@ -258,7 +262,36 @@ class wave_analyzer:
 
         for idx, wave in enumerate(self.waves, start=1):
             max_speed_kmh = wave['max_speed'] * 3.6  # Convert m/s to km/h
-            table_rows += f"| {idx} | {max_speed_kmh:.2f} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} | {wave['length']:.2f} |\n"
+            table_rows += f"| {idx} | {max_speed_kmh:.1f} | {wave['duration']:.1f} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} | {int(wave['length'])} |\n"
 
         return table_header + table_divider + table_rows
+
+    def generate_summary_markdown_table(self):
+        """
+        Generates a markdown formatted table representing the session summary.
+        """
+        # Calculate total GPS length
+        total_gps_length = sum(
+            geodesic((self.latitudes[i], self.longitudes[i]), (self.latitudes[i + 1], self.longitudes[i + 1])).meters
+            for i in range(len(self.latitudes) - 1)
+        )
+
+        # Calculate total ridden waves length
+        total_ridden_waves_length = sum(wave['length'] for wave in self.waves)
+
+        # Get number of waves
+        number_of_waves = len(self.waves)
+
+        # Get city using the first GPS coordinate
+        geolocator = Nominatim(user_agent="wave_analyzer")
+        location = geolocator.reverse((self.latitudes[0], self.longitudes[0]), language='en')
+        print(location.raw)
+        city = location.raw.get('address', {}).get('village', 'Unknown')
+
+        # Generate markdown table
+        table_header = "| Total GPS Length (m) | Total Ridden Waves Length (m) | Number of Waves | City |\n"
+        table_divider = "|----------------------|------------------------------|-----------------|------|\n"
+        table_row = f"| {int(total_gps_length)} | {int(total_ridden_waves_length)} | {number_of_waves} | {city} |\n"
+
+        return table_header + table_divider + table_row
 
