@@ -27,6 +27,14 @@ import folium
 
 from wave_analyzer import wave_analyzer
 
+# Constants for color gradient
+COLORS = [
+    (13, 8, 135),  # Dark blue
+    (156, 23, 158),  # Purple
+    (237, 121, 83),  # Orange
+    (240, 249, 33)  # Yellow
+]
+
 def interpolate_color(val, colors):
     """Interpolates between given colors based on val (0 to 1)."""
     val = np.clip(val, 0, 1)  # Ensure value is within range
@@ -48,48 +56,16 @@ def speed_to_color(speed, min_speed, max_speed):
     else:
         norm_speed = (speed - min_speed) / (max_speed - min_speed)
 
-    # Define color gradient (approximate "plasma")
-    colors = [
-        (13, 8, 135),  # Dark blue
-        (156, 23, 158),  # Purple
-        (237, 121, 83),  # Orange
-        (240, 249, 33)  # Yellow
-    ]
+    return interpolate_color(norm_speed, COLORS)
 
-    return interpolate_color(norm_speed, colors)
-
-def plot_colored_route(fit_file_path, wave_params):
+def create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed, waves):
     """
-    Plots an activity map with segments color-coded by speed.
-    Additionally, detects waves when speed exceeds 'wave_speed_threshold' (m/s) for at least 'wave_min_duration' seconds,
-    and adds numbered markers to the map at the detected wave positions.
+    Creates a folium map with color-coded segments and wave markers.
     """
-
-    progress(0, desc="Initializing")
-
-    # Extract wave detection parameters from the state
-    wave_speed_threshold = wave_params.get("speed_threshold", 2.0)
-    wave_min_duration = wave_params.get("min_duration", 2.0)
     
-    print(f"plotting {fit_file_path}")
-
-    # Analyze wave data
-    wazer = wave_analyzer( wave_speed_threshold, wave_min_duration )
-    wazer.process(fit_file_path)
-    filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed = wazer.get_motion_data()
-    waves = wazer.get_waves_data()
-
-    progress(0.5, desc="Processing wave data")
-
-    print("instanciating folium map")
-
-    # Create map centered at the first coordinate
     m = folium.Map(location=[filtered_lat[0], filtered_lon[0]], zoom_start=15, max_zoom=20)
 
-     # Create a FeatureGroup for raw positioning
     raw_positioning = folium.FeatureGroup(name="Raw Positioning")
-
-    # Plot segments with color-coded speed
     for i in range(len(filtered_lat) - 1):
         color = f'#{speed_to_color(filtered_speed[i], min_speed, max_speed)[0]:02x}' \
                 f'{speed_to_color(filtered_speed[i], min_speed, max_speed)[1]:02x}' \
@@ -102,28 +78,19 @@ def plot_colored_route(fit_file_path, wave_params):
             opacity=0.8
         ).add_to(raw_positioning)
 
-    progress(0.7, desc="Plotting segments")
-
-    # Create a FeatureGroup for wave markers
     wave_markers = folium.FeatureGroup(name="Wave Markers")
-
-    # Create a FeatureGroup for wave segments
     wave_segments = folium.FeatureGroup(name="Wave Segments")
 
-    # Add markers with wave index numbers at detected wave locations
     for idx, wave_dict in enumerate(waves, start=1):
         wave_max_speed_idx = wave_dict['max_speed_index']
         wave_max_speed = wave_dict['max_speed']
         wave_first_idx = wave_dict['first_point_index']
         wave_last_idx = wave_dict['last_point_index']
 
-        print(f"{wave_max_speed_idx}/{wave_first_idx}/{wave_last_idx}")
-
         popup_text = f"#{idx}\n{round(3.6 * wave_max_speed,1)} km/h"
         folium.Marker(
             location=[filtered_lat[wave_max_speed_idx], filtered_lon[wave_max_speed_idx]],
             popup=popup_text,
-            #icon=folium.DivIcon(html=f'<div style="font-size: 12pt; color: black">{idx}</div>')
             icon=folium.Icon("green")
         ).add_to(wave_markers)
 
@@ -135,7 +102,7 @@ def plot_colored_route(fit_file_path, wave_params):
             fill_opacity=0.6,
             opacity=1,
             fill_color="green",
-            fill=False,  # gets overridden by fill_color
+            fill=False,
         ).add_to(wave_segments)
 
         folium.Circle(
@@ -146,7 +113,7 @@ def plot_colored_route(fit_file_path, wave_params):
             fill_opacity=0.6,
             opacity=1,
             fill_color="red",
-            fill=False,  # gets overridden by fill_color
+            fill=False,
         ).add_to(wave_segments)
 
         folium.PolyLine(
@@ -156,15 +123,33 @@ def plot_colored_route(fit_file_path, wave_params):
             opacity=0.8
         ).add_to(wave_segments)
 
-    progress(0.9, desc="Adding wave markers")
-
-    # Add the layers to the map
     m.add_child(raw_positioning)
     m.add_child(wave_markers)
     m.add_child(wave_segments)
-
-    # Add a LayerControl so that layers can be toggled
     folium.LayerControl().add_to(m)
+
+    return m
+
+def plot_colored_route(wazer: wave_analyzer):
+    """
+    Plots an activity map with segments color-coded by speed.
+    Additionally, detects waves when speed exceeds 'wave_speed_threshold' (m/s) for at least 'wave_min_duration' seconds,
+    and adds numbered markers to the map at the detected wave positions.
+    """
+
+    progress(0, desc="Initializing")
+
+    # Retrieve wave data
+    filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed = wazer.get_motion_data()
+    waves = wazer.get_waves_data()
+
+    progress(0.5, desc="Processing wave data")
+
+    print("instanciating folium map")
+
+    m = create_map(filtered_lat, filtered_lon, filtered_speed, min_speed, max_speed, waves)
+
+    progress(0.9, desc="Adding wave markers")
 
     html_path = 'temp_map.html'
     m.save(html_path)
@@ -178,6 +163,25 @@ def plot_colored_route(fit_file_path, wave_params):
     progress(1, desc="Completed")
 
     return map_html
+
+def analyze_waves(fit_file_path: str, wave_params: gr.State):
+    """
+    Analyzes waves from a .fit file and returns a map and a markdown table.
+    """
+
+    # Extract wave detection parameters from the state
+    wave_speed_threshold = wave_params.get("speed_threshold", 2.0)
+    wave_min_duration = wave_params.get("min_duration", 2.0)
+
+    print(f"analyzing {fit_file_path}")
+
+    # Analyze waves
+    wazer = wave_analyzer(wave_speed_threshold, wave_min_duration)
+    wazer.process(fit_file_path)
+    map = plot_colored_route(wazer)
+    table = wazer.generate_waves_markdown_table()
+
+    return map, table
 
 # Create a Gradio interface
 with gr.Blocks() as demo:
@@ -198,6 +202,7 @@ with gr.Blocks() as demo:
     button = gr.Button("Analyze")
     progress = gr.Progress()
     output_map = gr.HTML()
+    waves_table = gr.Markdown()
 
     def update_wave_params(speed_threshold, min_duration):
         return {"speed_threshold": speed_threshold, "min_duration": min_duration}
@@ -211,7 +216,7 @@ with gr.Blocks() as demo:
                                 outputs=wave_params)
 
     # Connect button to function
-    button.click(plot_colored_route, inputs=[file_input, wave_params], outputs=output_map)
+    button.click(analyze_waves, inputs=[file_input, wave_params], outputs=[output_map, waves_table])
 
 if __name__ == "__main__":
     demo.launch()

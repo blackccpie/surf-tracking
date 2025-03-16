@@ -58,18 +58,7 @@ class wave_analyzer:
         _num_records = 0
 
         for _record in fitfile.get_messages("record"):
-            lat, lon, speed, timestamp = None, None, None, None
-
-            for _data in _record:
-
-                if _data.name == "position_lat":
-                    lat = _data.value / (2**31) * 180  # Convert Garmin's semi-circle format to degrees
-                elif _data.name == "position_long":
-                    lon = _data.value / (2**31) * 180
-                elif _data.name == "enhanced_speed":  # Speed in m/s
-                    speed = _data.value
-                elif _data.name == "timestamp":
-                    timestamp = _data.value.timestamp()  # Convert to UNIX time
+            lat, lon, speed, timestamp = self.__parse_record(_record)
 
             if lat is not None and lon is not None:
                 _latitudes.append(lat)
@@ -79,7 +68,7 @@ class wave_analyzer:
 
             _num_records += 1
 
-        if not len(_latitudes):
+        if not _latitudes:
             print("No GPS data found in the file!")
 
         print(f"Finished parsing {_num_records} records")
@@ -88,6 +77,22 @@ class wave_analyzer:
         self.longitudes = np.array(_longitudes)
         self.speeds = np.array(_speeds)
         self.timestamps = np.array(_timestamps)
+
+    def __parse_record(self, record):
+        """Parses a single record from the .fit file."""
+        lat, lon, speed, timestamp = None, None, None, None
+
+        for _data in record:
+            if _data.name == "position_lat":
+                lat = _data.value / (2**31) * 180  # Convert Garmin's semi-circle format to degrees
+            elif _data.name == "position_long":
+                lon = _data.value / (2**31) * 180
+            elif _data.name == "enhanced_speed":  # Speed in m/s
+                speed = _data.value
+            elif _data.name == "timestamp":
+                timestamp = _data.value.timestamp()  # Convert to UNIX time
+
+        return lat, lon, speed, timestamp
 
     def __compute_speed_from_gps(self):
         """
@@ -104,12 +109,16 @@ class wave_analyzer:
 
         return _estimated_speeds
 
-    def __apply_kalman_filter(self):
+    def __apply_kalman_filter(
+            self, 
+            transition_covariance_ratio=0.00001, # Adjust for smoother tracking
+            observation_covariance_ratio=0.0001 # Adjust GPS noise level
+        ):
         """
         Applies a Kalman Filter to smooth lat, lon, and estimated speed.
         """
         if np.isnan(self.speeds).all():  # If all speed values are missing, estimate them
-            self.speeds = self.__compute_speed_from_gps(self.latitudes, self.longitudes, self.timestamps)
+            self.speeds = self.__compute_speed_from_gps()
         else:
             print("using native speed measurements")
 
@@ -122,8 +131,8 @@ class wave_analyzer:
             initial_state_mean=initial_state,
             transition_matrices=transition_matrix,
             observation_matrices=observation_matrix,
-            observation_covariance=np.eye(3) * 0.0001,  # Adjust GPS noise level
-            transition_covariance=np.eye(3) * 0.00001,  # Adjust for smoother tracking
+            transition_covariance=np.eye(3) * transition_covariance_ratio,
+            observation_covariance=np.eye(3) * observation_covariance_ratio,
         )
 
         smoothed_states, _ = kf.smooth(np.column_stack([self.latitudes, self.longitudes, self.speeds]))
@@ -184,7 +193,7 @@ class wave_analyzer:
         """
         return self.waves
 
-    def process(self, fit_file_path, disable_filter=False):
+    def process(self, fit_file_path, disable_filter=False, transition_covariance_ratio=0.00001, observation_covariance_ratio=0.0001):
         """
         Processes waves data file.
         """
@@ -194,7 +203,10 @@ class wave_analyzer:
 
         if not disable_filter:
             # Apply Kalman filter (with speed estimation if missing)
-            self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.__apply_kalman_filter()
+            self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.__apply_kalman_filter(
+                transition_covariance_ratio=transition_covariance_ratio,
+                observation_covariance_ratio=observation_covariance_ratio
+            )
         else:
             self.filtered_latitudes, self.filtered_longitudes, self.filtered_speeds = self.latitudes, self.longitudes, self.speeds
 
@@ -210,4 +222,20 @@ class wave_analyzer:
         self.waves = self.__detect_waves(self.filtered_speeds)
 
         print(f"detected {len(self.waves)} waves")
+
+    def generate_waves_markdown_table(self):
+        """
+        Generates a markdown formatted table representing self.waves's data.
+        """
+        if not self.waves:
+            return "No waves detected."
+
+        table_header = "| Wave Index | Max Speed (m/s) | Duration (s) | Number of Points | Start Index | End Index |\n"
+        table_divider = "|------------|----------------|--------------|------------------|-------------|-----------|\n"
+        table_rows = ""
+
+        for idx, wave in enumerate(self.waves, start=1):
+            table_rows += f"| {idx} | {wave['max_speed']} | {wave['duration']} | {wave['num_points']} | {wave['first_point_index']} | {wave['last_point_index']} |\n"
+
+        return table_header + table_divider + table_rows
 
