@@ -1,12 +1,13 @@
-# Surf Tracking
+# Surf Tracking 🏄‍♂️
 
-https://apps.garmin.com/fr-FR/apps/edc1147f-466f-4a37-9d3d-0487c4fa6c3c
-https://surf-tracker.com
+## Inspirations
 
-https://python-visualization.github.io/folium/latest/user_guide/ui_elements/icons.html
+https://surf-tracker.com  
+https://apps.garmin.com/fr-FR/apps/edc1147f-466f-4a37-9d3d-0487c4fa6c3c  
+https://python-visualization.github.io/folium/latest/user_guide/ui_elements/icons.html  
 
 TODO:
 * layout
-* Stats markdown tab
-* start/end wave points
+* better wave detection / outlier detection
 * wave direction icons
+* speed graph (cf. Garmin web portal)

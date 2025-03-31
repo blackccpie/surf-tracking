@@ -209,8 +209,9 @@ with gr.Blocks() as demo:
     gr.Markdown("# 🌊 Surf Tracking - GPS Map")
     gr.Markdown("Upload a **.fit file** to visualize the GPS track on an interactive map.")
 
-    with gr.Row():
+    with gr.Sidebar():
         file_input = gr.File(label="Upload .fit file", file_count='single', file_types=['.fit'], height=150)
+        button = gr.Button("Analyze")
         
         with gr.Accordion("Detection Parameters", open=False):
             # Define sliders for wave detection parameters
@@ -220,7 +221,6 @@ with gr.Blocks() as demo:
     # Initialize state with default parameters
     wave_params = gr.State({"speed_threshold": 2.0, "min_duration": 2.0})
 
-    button = gr.Button("Analyze")
     gr.Markdown("## Session summary")
     waves_summary = gr.Markdown()
     gr.Markdown("## Session Map")
